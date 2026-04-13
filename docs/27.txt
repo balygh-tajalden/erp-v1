@@ -1,0 +1,39 @@
+القواعد الجوهرية لعمليات بيع العملات في نظام الـ ERP
+هذا الملف يحتفظ بـ 30 قاعدة (Business & Technical Rules) تم تأسيسها خلال برمجة دورة حياة "بيع العملة" (إنشاء، تعديل، إلغاء) لضمان الدقة المحاسبية التامة للنظام.
+
+أولاً: قواعد واجهة المستخدم والإدخال (UI & Input)
+Purchase Method Mapping: الواجهة تعرض "نقداً/حساب" ولكنها ترسل لقاعدة البيانات أرقاماً (1 للنقد، 2 للحساب) حصراً.
+Dynamic Account Filtering: إذا كانت طريقة الشراء 1 (نقد) تظهر الصناديق فقط، وإذا كانت 2 تظهر الحسابات الفرعية النشطة.
+Auto-Reset Dependencies: بمجرد تغيير العميل (أو طريقة الدفع)، يتم تفريغ خانة AccountID فوراً لمنع ترحيل بيانات خاطئة.
+DateTimePicker Precision: يجب استخدام DateTimePicker بدلاً من TextInput لضمان إخطار قاعدة البيانات بوقت العملية الفعلي بالثواني لترتيب القيود.
+Realtime Re-calculation: أي تغيير في (المبلغ المباع) أو (سعر الصرف) يعيد كتابة حقل (المبلغ المستلم - ExchangeAmount) تلقائياً قبل الحفظ.
+Unique Operation Number: يتم استخدام ValidationService لضمان أن رقم العملية (TheNumber) فريد على مستوى (الفرع + السنة).
+ثانياً: قواعد التوجيه ونقل البيانات (Data Transfer & DTOs)
+Bypassing Default Saves: تم تعطيل handleRecordCreation الافتراضي الخاص بـ Filament لمنعه من الكتابة المباشرة إلى الجداول.
+DTO Enforcement: الواجهة لا تتحدث مع قاعدة البيانات أبداً، بل تحول بياناتها إلى SellCurrencyDTO لتنظيف وتوحيد شكل البيانات.
+Centralized Saving: (Single Source Of Truth) الدالة الوحيدة المخولة بعملية الحفظ في النظام كله هي AccountingService::postSellCurrency.
+Strict Casting: يتم استخدام Casting للمبالغ بأن تكون بصيغة (float) داخل الـ DTO قبل إرسالها لجدول القيود.
+ثالثاً: قواعد بناء القيد المحاسبي (Journal Entry Creation)
+Auto Session Assignment: النظام لا يقبل الحفظ إلا إذا كانت هناك "جلسة محاسبه مفتوحة" (SessionID) مستخرجة آلياً.
+Double Entry Balance: القيد المحاسبي يتكون من أطراف متعددة، يجب أن يكون مجموع الحقل المحلي MCAmount دائماً = 0 (المدين = الدائن).
+Currency Difference Separation: (مربط الفرس)، فرق الصرف لا يدمج مع الحساب الأصلي بل يذهب آلياً لحساب "فروق أسعار بيع العملات (4121003)".
+Credit Logic: يُسجل حساب (الصندوق أو الوسيط) دائن بقيمة العملة المحلية ليمثل خروجها.
+Debit Logic: يُسجل حساب العميل أو الصندوق المستقبل مدين بقيمة العملة الصعبة أو بديلها للقبض.
+Duplicate Transaction Checks: قبل ترحيل القيد لـ IsPosted = 1 يتم فحص عدم وجود قيد بنفس الرقم والمبلغ والعملة في نفس الدقيقة.
+رابعاً: قواعد التعديل (Update & Modification)
+Full Rollback Principle: النظام في الأساس المالي السليم لا يقوم بـ"تعديل" سطر قيد مباشرة، بيفضل عكسه أو استخدام Logical Update لترتيب الأرصدة.
+Trigger Watchdog: تعديل أي مبلغ في تفاصيل القيد يستدعي الـ Trigger والذي يقوم بعملية Balance = Balance - OLD.Amount + NEW.Amount.
+RowVersion Tracking: كل تعديل يرفع قيمة الـ RowVersion تلقائياً لمنع الـ (دخول المتزامن Concurrency) لضمان عدم حفظ نفس السند مرتين بنسختين.
+Audit Trails Tracking: حفظ المستخدم (CreatedBy, ModifiedBy) إجباري مع أي حركات تعديل ولا يسمح بحدوثها مجهولة الهوية.
+خامساً: قواعد الحذف والاستعادة (Deletion & Cascading)
+No Physical Deletions: لا توجد جملة DELETE FROM حقيقية (Hard Delete) للعمليات المالية، النظام بالكامل يعتمد على SoftDeletes (deleted_at).
+Logical Deletion Flag: إلى جانب الـ SoftDeletes، يُرفع علم IsDeleted = 1 (كـ Boolean) للتوافق مع التقارير القديمة والمنظومة المحاسبية.
+Cascading Logic: حذف سند بيع العملة (الأب) يستدعي آلياً حذف (القيد المحاسبي) التابع له، ولا يمكن أن يُيتم القيد.
+Reverse Entry Generation: في النسخ المتقدمة، يُمنع الحذف للقيود المقفلة، بل يتم توليد "قيد عكسي آلي" (Reverse Entry) لإلغائها وإبقاء أثرها المحاسبي واضحاً.
+Entry Detail Nuke: عندما يتم استدعاء Soft Delete للقيد المحاسبي الأب، يسقط هذا الحذف على كل الأسطر tblEntryDetails التابعة له بالتتابع.
+Restoration Cascading: إذا تراجعنا عن الحذف (Restore)، يجب أن يقوم النظام باستعادة سند بيع العملة، ثم القيد الخاص به.
+سادساً: قواعد معالجة الأرصدة (Balance Integrity)
+SQL-Level Independence: أرصدة الحسابات tblAccountBalances تدار حصرياً بواسطة قاعدة البيانات (DB Triggers) ولا علاقة لـ PHP بها.
+Post-Validation Requirement: لن يدخل أي مبلغ للرصيد، ولن يتم خصمه منه، إلا إذا كان حالة القيد IsPosted = 1.
+Soft Delete Balance Reversal: الإلغاء الوهمي (تغيير deleted_at من Null إلى Timestamp) يقرأه الـ Trigger كعملية خصم ويسقط المبالغ من الأرصدة المتراكمة.
+Composite Primary Keys: يُحسب الرصيد بناءً على توليفة الـ (AccountID + CurrencyID + BranchID) ولا يتم خلط الأرصدة لنفس الحساب بعملات مختلفة.
