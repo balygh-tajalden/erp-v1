@@ -52,7 +52,7 @@ The project includes a streamlined setup script:
 
 1.  **Clone and Enter:**
     ```bash
-    cd my-dashboard
+    cd erp-v1
     ```
 
 2.  **Automated Setup:**
